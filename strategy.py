@@ -1,9 +1,9 @@
 """
 pumpfunbot/strategy.py
-Trading logic + indicateurs + IA + risk-manager (market-cap)
+Trading logic + indicateurs + IA + risk-manager (market-cap €)
 """
 
-import time, collections, pathlib, joblib, json
+import time, collections, pathlib, joblib, json, math
 from dataclasses import dataclass, field
 from pf_helpers   import abbreviate, sol_to_eur
 from param_store  import PARAMS
@@ -11,21 +11,22 @@ from data_logger  import append as log_row
 from notifications import send
 
 # ────────────────────────── constantes ─────────────────────────
-TOKEN_SUPPLY      = 1_000_000_000          # supply fixe Pump.fun
-MIGRATE_CAP_EUR   = 69_000                 # seuil migration
-MODEL_PATH        = pathlib.Path("model.joblib")
+TOKEN_SUPPLY     = 1_000_000_000            # supply fixe
+MIGRATE_CAP_EUR  = 69_000                   # seuil migration
+TRAIL_STEP_ATR   = 0.5                      # trail↑ chaque +0.5 ATR
+MODEL_PATH       = pathlib.Path("model.joblib")
 clf = joblib.load(MODEL_PATH) if MODEL_PATH.exists() else None
 
 # ────────────────────────── structures ─────────────────────────
 @dataclass
 class TokenInfo:
-    mint: str
-    name: str
-    progress: float = 0.0      # 0-1 basé sur mcap / 69 k€
+    mint: str; name: str
+    progress: float = 0.0      # mcap / 69 k €
     mcap_sol: float = 0.0
+    price:    float = 0.0      # MCap en € (pour l’UI)
     holders:  int   = 0
     devPct:   float = 0.0
-    lpSize:   float = 0.0
+    lpSize:   float = 0.0      # en SOL
     hist_mcap: collections.deque = field(default_factory=lambda: collections.deque(maxlen=900))
     vol_hist:  collections.deque = field(default_factory=lambda: collections.deque(maxlen=900))
 
@@ -37,9 +38,8 @@ balance = equity_high = session_dd = 0.0
 
 # ──────────────────────── indicateurs rapides ──────────────────
 def _prices(t: TokenInfo):
-    """Approx price = mcap / supply (en €)."""
     if not t.hist_mcap: return []
-    return [mc*sol_to_eur()/TOKEN_SUPPLY for _,mc in t.hist_mcap]
+    return [mc*sol_to_eur()/TOKEN_SUPPLY for _, mc in t.hist_mcap]
 
 def sma(lst,n):  return None if len(lst)<n else sum(lst[-n:])/n
 def rsi(lst,n=14):
@@ -59,7 +59,7 @@ def price_change_1m(t):
 __all__ = ["tokens","open_trades","trades","balance",
            "init_balance","on_pump","price_change_1m","vol_5m"]
 
-# ──────────────────────── capital & sizing ─────────────────────
+# ─────────────────────── capital & sizing ──────────────────────
 def init_balance(v:float):
     global balance,equity_high,session_dd
     balance=equity_high=v; session_dd=0.0
@@ -72,7 +72,7 @@ def _size(atr14:float):
 def _open(t, feats):
     global balance
     atr14 = atr(_prices(t),14) or 0.01
-    entry = t.mcap_sol * sol_to_eur()
+    entry = t.price                     # MCap €
     qty   = _size(atr14)
     pos = {
         "mint":t.mint,"name":t.name,"entry":entry,"qty":qty,
@@ -80,7 +80,8 @@ def _open(t, feats):
         "stop":entry-PARAMS["sl_mult"]*atr14,
         "trail":entry-PARAMS["sl_mult"]*atr14,
         "high":entry,"invest":entry*qty,
-        "features":feats,"time_in":time.time()
+        "features":feats,"time_in":time.time(),
+        "last_trail_step": entry
     }
     open_trades[t.mint]=pos
     balance-=pos["invest"]
@@ -92,27 +93,34 @@ def _close(pos, px, why):
     balance+=pos["invest"]+pnl
     equity_high=max(equity_high,balance)
     session_dd=min(session_dd,balance-equity_high)
-    log_row({**pos["features"]}, 1 if pnl>0 else 0)
-    trades.append({**pos,"exit":px,"pnl":pnl,"reason":why,"time_out":time.time()})
+    log_row({**pos["features"]}, int(pnl>0))
+    trades.append({**pos,
+                   "exit":px,
+                   "pnl":pnl,
+                   "pct":pnl/pos["invest"]*100 if pos["invest"] else 0,
+                   "reason":why,
+                   "time_out":time.time()})
     del open_trades[pos["mint"]]
     send("CLOSE",f"{pos['name']} {why} pnl {pnl:.2f}")
 
 # ──────────────────────── IA gate ──────────────────────────────
 def _ia_ok(feats):
     if not (PARAMS["use_ai"] and clf): return True
-    vec=[[feats[k] for k in ("progress","mcap_eur","devPct","lpSize","holders",
-                             "sma5","sma15","rsi14","atr14","vol_5m")]]
+    vec=[[feats[k] for k in (
+        "progress","mcap_eur","devPct","lpSize","holders",
+        "sma5","sma15","rsi14","atr14","vol_5m")]]
     return clf.predict_proba(vec)[0][1] >= PARAMS["ai_thresh"]
 
 # ─────────────────────── feature builder ───────────────────────
 def _feats(t,ts):
-    pr=_prices(t); mcap_eur=t.mcap_sol*sol_to_eur()
+    pr=_prices(t)
     return {
-        "ts":ts,"mint":t.mint,"name":t.name,"progress":t.progress,
-        "mcap_eur":mcap_eur,"devPct":t.devPct,"lpSize":t.lpSize,
-        "holders":t.holders,
+        "ts":ts,"mint":t.mint,"name":t.name,
+        "progress":t.progress,"mcap_eur":t.price,
+        "devPct":t.devPct,"lpSize":t.lpSize,"holders":t.holders,
         "sma5":sma(pr,300) or 0,"sma15":sma(pr,900) or 0,
-        "rsi14":rsi(pr,14) or 0,"atr14":atr(pr,14) or 0,"vol_5m":vol_5m(t)
+        "rsi14":rsi(pr,14) or 0,"atr14":atr(pr,14) or 0,
+        "vol_5m":vol_5m(t)
     }
 
 # ───────────────────── subscribe helper ────────────────────────
@@ -130,7 +138,7 @@ async def on_pump(msg, ws):
     if tx=="create":
         t=TokenInfo(mint, abbreviate(mint))
         t.devPct  = msg.get("devPercent",0)
-        t.lpSize  = msg.get("lpLamports",0)/1e9
+        t.lpSize  = msg.get("lpLamports", msg.get("lpTotalSol",0))/1e9
         t.holders = msg.get("holderCount",0)
         tokens[mint]=t
         await _subscribe(ws,mint)
@@ -142,39 +150,43 @@ async def on_pump(msg, ws):
 
         # market-cap & volume
         t.mcap_sol = msg.get("marketCapSol", t.mcap_sol)
+        t.price    = t.mcap_sol * sol_to_eur()          # ⇐ ajoute price
         dvol       = msg.get("marketCapSol", 0.0)
 
-        # progress basé sur mcap / 69 k€
-        mcap_eur = t.mcap_sol * sol_to_eur()
-        t.progress = min(mcap_eur / MIGRATE_CAP_EUR, 1.0)
+        # progress 0-1
+        t.progress = min(t.price / MIGRATE_CAP_EUR, 1.0)
 
         # facultatifs
         if "holderCount" in msg: t.holders = msg["holderCount"]
         if "devPercent"  in msg: t.devPct  = msg["devPercent"]
-        if "lpLamports"  in msg: t.lpSize  = msg["lpLamports"]/1e9
+        if any(k in msg for k in ("lpLamports","lpTotalSol")):
+            lamports = msg.get("lpLamports", msg.get("lpTotalSol",0))
+            t.lpSize = lamports / 1e9
 
         # historique
         now=time.time()
         t.hist_mcap.append((now,t.mcap_sol))
         t.vol_hist.append((now,dvol))
 
-        price_eur = mcap_eur
+        atr14 = atr(_prices(t),14) or 0.01
 
         # gestion positions
         if mint in open_trades:
             pos=open_trades[mint]
-            if price_eur>pos["high"]:
-                pos["high"]=price_eur
-                pos["trail"]=max(pos["trail"],
-                                 price_eur-PARAMS["sl_mult"]*(atr(_prices(t),14) or 0))
-            if price_eur>=pos["tp"]:           _close(pos,price_eur,"TP")
-            elif price_eur<=pos["trail"] or price_eur<=pos["stop"]:
-                                               _close(pos,price_eur,"SL/Trail")
+            if t.price>pos["high"]:
+                pos["high"]=t.price
+            if t.price - pos["last_trail_step"] >= TRAIL_STEP_ATR*atr14:
+                pos["trail"] = t.price - PARAMS["sl_mult"]*atr14
+                pos["last_trail_step"] = t.price
+            if t.price>=pos["tp"]:           _close(pos,t.price,"TP")
+            elif t.price<=pos["trail"] or t.price<=pos["stop"]:
+                                               _close(pos,t.price,"SL/Trail")
         else:
+            if t.lpSize<5 or t.holders<25: return      # liquidité mini
             if t.progress>=0.90 and _ia_ok(f:=_feats(t,now)):
                 _open(t,f)
         return
 
     # ── migration ─────────────────────────────────────────────
     if tx=="migrate" and mint in open_trades:
-        _close(open_trades[mint], tokens[mint].mcap_sol*sol_to_eur(), "GRAD")
+        _close(open_trades[mint], tokens[mint].price, "GRAD")
