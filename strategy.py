@@ -11,7 +11,7 @@ from data_logger  import append as log_row
 from notifications import send
 
 # ───────────────────────────────────────────────────────────────
-TOTAL_SUPPLY  = 69_000
+TOTAL_SUPPLY = 1_000_000_000
 MODEL_PATH    = pathlib.Path("model.joblib")
 clf = joblib.load(MODEL_PATH) if MODEL_PATH.exists() else None
 
