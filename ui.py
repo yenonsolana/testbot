@@ -111,15 +111,21 @@ else:
     st.caption("—")
 
 # ───────────────────────── historique trades ──────────────────
+# ───────────────────────── historique trades ──────────────────
 st.subheader("Historique")
 if trades:
-    dfh=pd.DataFrame(trades)
-    dfh=dfh.rename(columns={
-        "name":"Token","entry":"Entrée €","exit":"Sortie €",
-        "pnl":"PnL €","pct":"PnL %","reason":"Type"})
-    num_fmt={"Entrée €":"{:.4f}","Sortie €":"{:.4f}",
-             "PnL €":"{:.2f}","PnL %":"{:.1f}"}
-    st.dataframe(dfh[list(num_fmt)+["Token","Type"]]
-                 .style.format(num_fmt), use_container_width=True)
+    dfh = pd.DataFrame(trades).rename(columns={
+        "name":"Token","reason":"Type",
+        "entry":"Entrée €","exit":"Sortie €",
+        "pnl":"PnL €","pct":"PnL %"
+    })
+    num_fmt = {"Entrée €":"{:.4f}","Sortie €":"{:.4f}",
+               "PnL €":"{:.2f}","PnL %":"{:.1f}"}
+    cols = [c for c in ["Token","Type"] + list(num_fmt) if c in dfh.columns]
+    st.dataframe(
+        dfh[cols].style.format({k:v for k,v in num_fmt.items() if k in dfh.columns}),
+        use_container_width=True
+    )
 else:
     st.caption("—")
+

@@ -149,7 +149,9 @@ async def on_pump(msg, ws):
             if t.init_tokens is None:
                 t.init_tokens = vtok
             sold = t.init_tokens - vtok
-            t.progress = sold / TOTAL_SUPPLY
+            t.progress = sold / t.init_tokens  # ratio 0-1
+            t.progress = max(0, min(t.progress, 1))
+
 
         # fallback progressPercent
         elif "progressPercent" in msg:
