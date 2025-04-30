@@ -11,12 +11,11 @@ from strategy    import (
     price_change_1m, vol_5m
 )
 
-# ───────────────────────── helper “prix” actuel ────────────────
-def cur_price_eur(tkn):
-    """Convertit la mcap SOL en € pour obtenir un pseudo ‘prix’."""
+# ───────────────────────── helper prix courant ────────────────
+def cur_price_eur(tkn):        # “prix” = market-cap SOL → €
     return tkn.mcap_sol * sol_to_eur()
 
-# ───────────────────────── démarrage WebSocket ─────────────────
+# ───────────────────────── lancement WebSocket ────────────────
 if "ws_started" not in st.session_state:
     init_balance(1_000.0)
     lock = threading.Lock()
@@ -24,28 +23,27 @@ if "ws_started" not in st.session_state:
     run_in_thread(router, lock)
     st.session_state["ws_started"] = True
 
-# ───────────────────────── configuration page ──────────────────
+# ───────────────────────── page / refresh ─────────────────────
 st.set_page_config("Pump.fun Bot", "🤖", layout="wide")
 st_autorefresh(interval=5_000, key="refresh")
 st.title("🤖 Pump.fun Trading Bot — simulation")
 
-# ───────────────────────── sidebar paramètres ──────────────────
-def s(lbl, key, mn, mx, step, typ=float):
-    PARAMS[key] = typ(st.sidebar.slider(
-        lbl, typ(mn), typ(mx),
-        typ(PARAMS.get(key, mn)), step=typ(step)
-    ))
+# ───────────────────────── sidebar paramètres ─────────────────
+def s(lbl,k,mn,mx,step,t=float):
+    PARAMS[k] = t(st.sidebar.slider(lbl, t(mn), t(mx),
+                                    t(PARAMS.get(k,mn)), step=t(step)))
 
-s("Risk % / trade",  "risk_pct",   0.5, 10.0, 0.5, float)
-s("TP × ATR",        "tp_mult",      1,  8,   0.5, float)
-s("SL × ATR",        "sl_mult",      1,  4,   0.5, float)
-s("Slippage %",      "slippage",     0, 10,   1,   int)
+s("Risk % / trade",  "risk_pct", 0.5, 10, 0.5, float)
+s("TP × ATR",        "tp_mult",    1,  8, 0.5, float)
+s("SL × ATR",        "sl_mult",    1,  4, 0.5, float)
+s("Slippage %",      "slippage",   0, 10, 1,   int)
 
-PARAMS["use_ai"] = st.sidebar.checkbox("🔮 Activer l’IA", value=PARAMS["use_ai"])
-s("Seuil IA",        "ai_thresh",   0.5, 0.9, 0.05, float)
-s("Max DD jour %",   "max_dd_pct",    5, 50,   1,   float)
+PARAMS["use_ai"] = st.sidebar.checkbox("🔮 Activer l’IA",
+                                       value=PARAMS["use_ai"])
+s("Seuil IA",      "ai_thresh", 0.5, 0.9, 0.05, float)
+s("Max DD jour %", "max_dd_pct",   5, 50, 1,   float)
 
-prog_min = st.sidebar.slider("Progression min %", 0, 100, 0, step=1)
+prog_min = st.sidebar.slider("Progression min %", 0, 100, 0)
 
 st.sidebar.markdown("---")
 st.sidebar.write(f"**SOL ≃ {sol_to_eur():.2f} €**")
@@ -53,75 +51,75 @@ st.sidebar.write(f"Tokens suivis : **{len(tokens)}**")
 st.sidebar.write(f"Prêts à graduate : **{sum(1 for t in tokens.values() if t.progress>=0.95)}**")
 if st.sidebar.button("🔄 Hard refresh"): st.rerun()
 
-# ───────────────────────── KPIs globaux ────────────────────────
-c1, c2, c3, c4, c5 = st.columns(5)
-c1.metric("Solde €",       f"{balance:,.2f}")
+# ───────────────────────── KPIs globaux ───────────────────────
+c1,c2,c3,c4,c5 = st.columns(5)
+c1.metric("Solde €", f"{balance:,.2f}")
+
 real_pnl = sum(t["pnl"] for t in trades)
 c2.metric("PnL réalisé €", f"{real_pnl:,.2f}")
 
 latent_pnl = sum(
     (cur_price_eur(tokens[m]) - tr["entry"]) * tr["qty"]
-    for m, tr in open_trades.items()
+    for m,tr in open_trades.items()
 )
-c3.metric("PnL latent €",  f"{latent_pnl:,.2f}")
+c3.metric("PnL latent €", f"{latent_pnl:,.2f}")
 
 if trades:
     wins = sum(1 for t in trades if t["pnl"] > 0)
-    c4.metric("Win-rate %", f"{wins/len(trades)*100:.1f}")
-c5.metric("Pos. ouvertes", len(open_trades))
+    c4.metric("Win-rate %", f"{wins/len(trades)*100:,.1f}")
 
+c5.metric("Pos. ouvertes", len(open_trades))
 st.divider()
 
-# ───────────────────────── tableau tokens ──────────────────────
-rows = []
+# ───────────────────────── tableau tokens ─────────────────────
+rows=[]
 for t in tokens.values():
     if t.progress*100 < prog_min: continue
     rows.append({
-        "Token":      f"[{t.name}]({gmgn_link(t.mint)})",
-        "Prog %":     f"{t.progress*100:.1f}",
-        "MCap €":     f"{t.mcap_sol*sol_to_eur():.0f}",
-        "Δ 1 min %":  f"{price_change_1m(t)*100:+.1f}",
-        "Vol 5 m":    f"{vol_5m(t):.2f}",
-        "dev %":      f"{t.devPct:.1f}",
-        "LP SOL":     f"{t.lpSize:.1f}",
-        "Holders":    t.holders
+        "Token": f"[{t.name}]({gmgn_link(t.mint)})",
+        "Prog %": f"{min(t.progress,1)*100:.1f}",
+        "MCap €": f"{t.mcap_sol*sol_to_eur():.0f}",
+        "Δ 1 min %": f"{price_change_1m(t)*100:+.1f}",
+        "Vol 5 m": f"{vol_5m(t):.2f}",
+        "dev %": f"{t.devPct:.1f}",
+        "LP SOL": f"{t.lpSize:.1f}",
+        "Holders": t.holders
     })
 
 st.subheader(f"Tokens ≥ {prog_min}% — n={len(rows)}")
-st.table(rows if rows else [{"Info": "Aucun token"}])
+st.table(rows if rows else [{"Info":"Aucun token"}])
 
-# ───────────────────────── positions ouvertes ──────────────────
+# ───────────────────────── positions ouvertes ─────────────────
 st.subheader("Positions ouvertes")
 if open_trades:
-    view = []
-    for tr in open_trades.values():
-        t = tokens[tr["mint"]]
-        price = cur_price_eur(t)
+    view=[]
+    for m,tr in open_trades.items():
+        price = cur_price_eur(tokens[m])
         view.append({
-            "Token":     tr["name"],
-            "Entrée €":  tr["entry"],
-            "MCap €":    price,
-            "Qté":       tr["qty"],
-            "TP €":      tr["tp"],
-            "Stop €":    tr["trail"],
-            "uPnL €":    (price - tr["entry"]) * tr["qty"]
+            "Token": f"[{tokens[m].name}]({gmgn_link(m)})",
+            "Entrée €": tr["entry"],
+            "MCap €": price,
+            "Qté": tr["qty"],
+            "uPnL €": (price-tr["entry"])*tr["qty"],
+            "TP €": tr["tp"],
+            "Stop €": tr["trail"]
         })
-    st.dataframe(pd.DataFrame(view).style.format("{:.4f}"), use_container_width=True)
+    df=pd.DataFrame(view)
+    num_fmt={c:"{:.4f}" for c in ("Entrée €","MCap €","Qté","uPnL €","TP €","Stop €")}
+    st.dataframe(df.style.format(num_fmt), use_container_width=True)
 else:
     st.caption("—")
 
-# ───────────────────────── historique trades ───────────────────
+# ───────────────────────── historique trades ──────────────────
 st.subheader("Historique")
 if trades:
-    dfh = pd.DataFrame(trades)
-    st.dataframe(
-        dfh[["name","entry","exit","pnl","pct","reason"]]
-        .rename(columns={
-            "name":"Token","entry":"Entrée €","exit":"Sortie €",
-            "pnl":"PnL €","pct":"PnL %","reason":"Type"})
-        .style.format({"Entrée €":"{:.4f}", "Sortie €":"{:.4f}",
-                       "PnL €":"{:.2f}",   "PnL %":"{:.1f}"}),
-        use_container_width=True
-    )
+    dfh=pd.DataFrame(trades)
+    dfh=dfh.rename(columns={
+        "name":"Token","entry":"Entrée €","exit":"Sortie €",
+        "pnl":"PnL €","pct":"PnL %","reason":"Type"})
+    num_fmt={"Entrée €":"{:.4f}","Sortie €":"{:.4f}",
+             "PnL €":"{:.2f}","PnL %":"{:.1f}"}
+    st.dataframe(dfh[list(num_fmt)+["Token","Type"]]
+                 .style.format(num_fmt), use_container_width=True)
 else:
     st.caption("—")
