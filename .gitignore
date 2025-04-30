@@ -1,0 +1,7 @@
+# python
+__pycache__/
+*.py[cod]
+.venv/
+# données locales
+training_set.csv
+model.joblib

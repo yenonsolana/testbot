@@ -1,0 +1,7 @@
+streamlit>=1.30
+streamlit-autorefresh
+pandas
+requests
+websockets
+scikit-learn
+joblib
