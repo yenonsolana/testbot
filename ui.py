@@ -67,15 +67,16 @@ rows = []
 for t in tokens.values():
     if t.progress*100 < prog_min: continue
     rows.append({
-        "Token":      f"[{t.name}]({gmgn_link(t.mint)})",
-        "Prog %":     f"{t.progress*100:.1f}",
-        "Prix €":     f"{t.price:.4f}",
-        "Δ 1 min %":  f"{price_change_1m(t)*100:+.1f}",
-        "Vol 5 min":  f"{vol_5m(t):.2f}",
-        "dev %":      f"{t.devPct:.1f}",
-        "LP SOL":     f"{t.lpSize:.1f}",
-        "Holders":    t.holders
+        "Token": f"[{t.name}]({gmgn_link(t.mint)})",
+        "Prog %": f"{t.progress * 100:.1f}",
+        "MCap €": f"{t.mcap_sol * sol_to_eur():.0f}",
+        "Δ 1 min %": f"{price_change_1m(t) * 100:+.1f}",
+        "Vol 5 m": f"{vol_5m(t):.2f}",
+        "dev %": f"{t.devPct:.1f}",
+        "LP SOL": f"{t.lpSize:.1f}",
+        "Holders": t.holders
     })
+
 st.subheader(f"Tokens ≥ {prog_min}% — n={len(rows)}")
 st.table(rows if rows else [{"Info": "Aucun token"}])
 
